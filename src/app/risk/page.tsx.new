@@ -1,0 +1,16 @@
+import { useCurrency } from '@/context/CurrencyContext';
+
+export default function RiskPage() {
+  return (
+    <div className="p-4">
+      <h1>Risk Analysis</h1>
+      <p>The complete risk analysis feature is coming soon. This page will include:</p>
+      <ul className="list-disc pl-6 space-y-2 mt-4">
+        <li>Portfolio composition input</li>
+        <li>Risk metrics calculation</li>
+        <li>Interactive risk-return charts</li>
+        <li>Historical performance analysis</li>
+      </ul>
+    </div>
+  );
+}

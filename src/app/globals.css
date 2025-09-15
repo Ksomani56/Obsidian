@@ -1,0 +1,86 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    @apply border-gray-300 dark:border-gray-700;
+  }
+  
+  body {
+    @apply bg-light-bg text-light-primary dark:bg-dark-bg dark:text-dark-primary font-sans transition-colors duration-300;
+  }
+  
+  /* Custom scrollbar */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  
+  ::-webkit-scrollbar-track {
+    @apply bg-light-bg dark:bg-dark-bg;
+  }
+  
+  ::-webkit-scrollbar-thumb {
+    @apply bg-light-border dark:bg-dark-border rounded-sm;
+  }
+  
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-light-secondary dark:bg-dark-secondary;
+  }
+}
+
+@layer components {
+  .widget {
+    @apply bg-light-pane dark:bg-dark-pane border border-light-border dark:border-dark-border rounded-md;
+  }
+  
+  .widget-title {
+    @apply px-4 py-3 border-b border-light-border dark:border-dark-border font-semibold text-light-primary dark:text-dark-primary;
+  }
+  
+  .widget-content {
+    @apply p-4;
+  }
+  
+  .btn-primary {
+    @apply bg-light-accent dark:bg-dark-accent hover:bg-light-accent/90 dark:hover:bg-dark-accent/90 text-light-bg dark:text-dark-bg font-medium py-2 px-4 rounded-md transition-colors duration-200;
+  }
+  
+  .btn-secondary {
+    @apply bg-light-pane dark:bg-dark-pane hover:bg-light-hover dark:hover:bg-dark-hover text-light-primary dark:text-dark-primary font-medium py-2 px-4 rounded-md border border-light-border dark:border-dark-border transition-colors duration-200;
+  }
+  
+  .input-field {
+    @apply w-full px-3 py-2 border border-light-border dark:border-dark-border rounded-md bg-light-bg dark:bg-dark-bg text-light-primary dark:text-dark-primary focus:outline-none focus:border-light-accent dark:focus:border-dark-accent focus:ring-0 transition-colors duration-200;
+  }
+  
+  .metric-positive {
+    @apply text-light-green dark:text-dark-green;
+  }
+  
+  .metric-negative {
+    @apply text-light-red dark:text-dark-red;
+  }
+  
+  .text-primary {
+    @apply text-light-primary dark:text-dark-primary;
+  }
+  
+  .text-secondary {
+    @apply text-light-secondary dark:text-dark-secondary;
+  }
+  
+  .bg-primary {
+    @apply bg-light-pane dark:bg-dark-pane;
+  }
+  
+  .bg-secondary {
+    @apply bg-light-bg dark:bg-dark-bg;
+  }
+  
+  .border-primary {
+    @apply border-light-border dark:border-dark-border;
+  }
+}
