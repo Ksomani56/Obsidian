@@ -52,17 +52,30 @@ export async function GET() {
       responses.map(async (response, index) => {
         if (!response.ok) {
           console.error(`Error fetching ${exchanges[index].name} stocks:`, response.statusText);
-          return [];
+          return { ok: false, data: [] as any[], exchange: exchanges[index].name };
         }
         const data = await response.json();
-        return Array.isArray(data) ? data.map(stock => ({
+        const normalized = Array.isArray(data) ? data.map(stock => ({
           ...stock,
           exchange: exchanges[index].name
         })) : [];
+        return { ok: true, data: normalized, exchange: exchanges[index].name };
       })
     );
 
-    const allStocks = results.flat();
+    let allStocks = results.flatMap(r => r.data);
+
+    // If NSE failed or returned 0, append a small mock NSE list so Indian symbols always appear
+    const nseOk = results.find(r => r.exchange === 'NSE')?.ok;
+    const hasNSE = allStocks.some((s: any) => (s.exchange || '').toUpperCase() === 'NSE');
+    if (!nseOk || !hasNSE) {
+      console.warn('NSE symbols unavailable from API, appending mock NSE list');
+      allStocks = allStocks.concat(
+        mockSymbols
+          .filter(s => (s.exchange || '') === 'NSE')
+          .map(s => ({ description: s.description, displaySymbol: s.displaySymbol, symbol: s.symbol, type: s.type, exchange: s.exchange }))
+      );
+    }
     
     if (allStocks.length === 0) {
       console.log('No stocks found from API, using mock data');

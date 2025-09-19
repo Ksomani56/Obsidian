@@ -7,6 +7,7 @@ import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 import Widget from '@/components/Widget'
 import { MarketRow, QuickStat } from '@/components/MarketComponents'
 import { useCurrency, formatCurrency } from '@/context/CurrencyContext'
+import ChartHeader from '@/components/ChartHeader'
 
 export default function Home() {
   const { currency, fxRate } = useCurrency()
@@ -27,6 +28,9 @@ export default function Home() {
   const [showSymbols, setShowSymbols] = useState(false)
   const [symbolError, setSymbolError] = useState<string | null>(null)
   const [liveMarketData, setLiveMarketData] = useState<any[]>([])
+  const [searchSubmitError, setSearchSubmitError] = useState<string | null>(null)
+  const [selectedName, setSelectedName] = useState<string>('')
+  const [selectedQuote, setSelectedQuote] = useState<{ c?: number; d?: number; dp?: number } | null>(null)
 
   const marketIndices = ['^GSPC', '^IXIC', '^DJI', '^NSEI', '^FTSE']
 
@@ -54,6 +58,13 @@ export default function Home() {
             setSymbolsAreMock(Boolean(data.isMock));
           } else {
             throw new Error('Invalid response format');
+          }
+          // Initialize selectedName based on default selectedStock if present
+          const found = (Array.isArray(data) ? data : data.symbols || []).find((s: any) => (s.symbol || s.displaySymbol) === selectedStock)
+          if (found) {
+            setSelectedName(found.description || found.symbol || selectedStock)
+          } else {
+            setSelectedName(selectedStock)
           }
       } catch (error) {
         console.error('Error fetching symbols:', error);
@@ -113,20 +124,43 @@ export default function Home() {
     setTimeout(() => setShowSymbols(false), 150)
   }
   
+  const handleSearchKeyDown = async (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      const input = searchQuery.trim()
+      if (!input) return
+      const best = filteredSymbols[0]
+      const symbolToTry = best ? best.symbol : input.toUpperCase()
+      await validateAndSelectSymbol(symbolToTry)
+    }
+  }
+
 
   // Fetch market data
   useEffect(() => {
     const fetchMarketData = async () => {
       try {
         const promises = marketIndices.map(async (symbol) => {
-          const response = await fetch(`/api/quote?symbol=${symbol}`)
-          const data = await response.json()
-          return {
-            name: symbol.replace('^', ''),
-            price: data.c,
-            change: data.d,
-            changePercent: data.dp,
-            isPositive: data.d > 0
+          try {
+            const response = await fetch(`/api/quote?symbol=${encodeURIComponent(symbol)}`)
+            if (!response.ok) throw new Error('Quote unavailable')
+            const data = await response.json()
+            if (typeof data.c !== 'number' || data.c <= 0) throw new Error('No quote')
+            return {
+              name: symbol.replace('^', ''),
+              price: data.c,
+              change: typeof data.d === 'number' ? data.d : null,
+              changePercent: typeof data.dp === 'number' ? data.dp : null,
+              isPositive: typeof data.d === 'number' ? data.d > 0 : false,
+            }
+          } catch {
+            return {
+              name: symbol.replace('^', ''),
+              price: null,
+              change: null,
+              changePercent: null,
+              isPositive: false,
+            }
           }
         })
         
@@ -151,13 +185,13 @@ export default function Home() {
       thirtyDaysAgo.setDate(today.getDate() - 30)
 
       const [candleRes, quoteRes] = await Promise.all([
-        fetch(`/api/candle?symbol=${ticker}&from=${Math.floor(thirtyDaysAgo.getTime() / 1000)}&to=${Math.floor(today.getTime() / 1000)}`),
-        fetch(`/api/quote?symbol=${ticker}`)
+        fetch(`/api/candle?symbol=${encodeURIComponent(ticker)}&from=${Math.floor(thirtyDaysAgo.getTime() / 1000)}&to=${Math.floor(today.getTime() / 1000)}`),
+        fetch(`/api/quote?symbol=${encodeURIComponent(ticker)}`)
       ])
 
       const [candleData, quoteData] = await Promise.all([
         candleRes.json(),
-        quoteRes.json()
+        quoteRes.ok ? quoteRes.json() : Promise.resolve({})
       ])
 
       if (candleData.s === 'ok' && candleData.t.length > 0) {
@@ -170,7 +204,7 @@ export default function Home() {
         const lastDate = new Date(candleData.t[candleData.t.length - 1] * 1000).toISOString().split('T')[0]
         const today = new Date().toISOString().split('T')[0]
         
-        if (lastDate !== today && quoteData.c) {
+        if (lastDate !== today && quoteData && quoteData.c) {
           data.push({
             date: today,
             price: quoteData.c
@@ -178,6 +212,7 @@ export default function Home() {
         }
 
         setStockData(data)
+        setSelectedQuote({ c: quoteData?.c, d: quoteData?.d, dp: quoteData?.dp })
       } else {
         throw new Error('No data available')
       }
@@ -199,6 +234,7 @@ export default function Home() {
       }
       
       setStockData(data)
+      setSelectedQuote(null)
     } finally {
       setIsLoading(false)
     }
@@ -209,12 +245,29 @@ export default function Home() {
     generateStockData(ticker)
   }
 
-  const handleStockSelect = (symbol: string) => {
-    setSelectedStock(symbol);
-    setSearchQuery('');
-    setShowSymbols(false);
-    generateStockData(symbol);
+  const handleStockSelect = async (symbol: string) => {
+    await validateAndSelectSymbol(symbol)
   };
+
+  const validateAndSelectSymbol = async (symbol: string) => {
+    try {
+      setSearchSubmitError(null)
+      const res = await fetch(`/api/quote?symbol=${encodeURIComponent(symbol)}`)
+      if (!res.ok) throw new Error('Stock not found')
+      const quote = await res.json()
+      if (!quote || typeof quote.c !== 'number' || quote.c <= 0) throw new Error('Stock not found')
+
+      setSelectedStock(symbol)
+      setSelectedQuote({ c: quote.c, d: quote.d, dp: quote.dp })
+      const match = symbols.find(s => s.symbol === symbol || s.displaySymbol === symbol)
+      setSelectedName(match ? (match.description || symbol) : symbol)
+      setSearchQuery('')
+      setShowSymbols(false)
+      await generateStockData(symbol)
+    } catch (err) {
+      setSearchSubmitError('Stock not found')
+    }
+  }
 
   // Generate initial data on component mount
   useEffect(() => {
@@ -273,12 +326,18 @@ export default function Home() {
                 {symbolsAreMock && (
                   <div className="mb-2 text-xs text-yellow-400">Using mock symbol list (FINNHUB_API_KEY missing or API unavailable)</div>
                 )}
+                {searchSubmitError && (
+                  <div className="mb-2 text-xs text-red-500">{searchSubmitError}</div>
+                )}
                 <div className="flex items-center space-x-2">
                   <Search className="h-4 w-4 text-secondary" />
                   <input
                     type="text"
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
+                    onFocus={handleSearchFocus}
+                    onBlur={handleSearchBlur}
+                    onKeyDown={handleSearchKeyDown}
                     placeholder={isLoadingSymbols ? "Loading symbols..." : "Search stocks..."}
                     className="flex-1 px-3 py-2 border border-primary rounded-md bg-secondary text-primary focus:outline-none focus:border-light-accent dark:focus:border-dark-accent"
                     disabled={isLoadingSymbols}
@@ -324,6 +383,17 @@ export default function Home() {
                 )}
               </div>
               
+              {/* Dynamic Header */}
+              <div>
+                <ChartHeader
+                  ticker={selectedStock}
+                  name={selectedName || selectedStock}
+                  price={selectedQuote?.c || (stockData.length > 0 ? stockData[stockData.length - 1]?.price : 0)}
+                  change={selectedQuote?.d ?? 0}
+                  changePercent={selectedQuote?.dp ?? 0}
+                />
+              </div>
+
               {/* Stock Chart */}
               <div className="h-64">
                 {isLoading ? (

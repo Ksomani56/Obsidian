@@ -5,6 +5,7 @@ import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, Responsi
 import { TrendingUp, Calendar, BarChart3, Activity, Target, AlertTriangle } from 'lucide-react'
 import Widget from '@/components/Widget'
 import ChartHeader from '@/components/ChartHeader'
+  
 import { useCurrency, formatCurrency } from '@/context/CurrencyContext'
 
 interface PredictionData {

@@ -6,26 +6,48 @@ interface QuoteResponse {
   l: number  // Low price of the day
   o: number  // Open price of the day
   pc: number // Previous close price
+  d?: number // Change
+  dp?: number // Change percent
 }
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url)
-  const symbol = searchParams.get('symbol')
+  const rawSymbol = searchParams.get('symbol')
 
-  if (!symbol) {
+  if (!rawSymbol) {
     return NextResponse.json({ error: 'Symbol parameter is required' }, { status: 400 })
   }
+
+  // Normalize symbols for Finnhub
+  // Support inputs like INFY.NS -> NSE:INFY, RELIANCE.BO -> BSE:RELIANCE
+  const normalizeSymbol = (s: string): string => {
+    const sym = s.trim()
+    if (sym.startsWith('^')) return sym // indices
+    if (/\.NS$/i.test(sym)) return `NSE:${sym.replace(/\.NS$/i, '')}`
+    if (/\.BO$/i.test(sym)) return `BSE:${sym.replace(/\.BO$/i, '')}`
+    if (/^[A-Z]{1,10}$/i.test(sym)) return sym.toUpperCase() // plain US tickers
+    return sym // pass through others (e.g., already NSE:INFY)
+  }
+
+  const symbol = normalizeSymbol(rawSymbol)
 
   const apiKey = process.env.FINNHUB_API_KEY
   if (!apiKey) {
     console.warn('Finnhub API key not found, using mock data')
     // Return mock data
+    const pc = 100 + Math.random() * 200
+    const c = pc + (Math.random() - 0.5) * 5
+    const d = c - pc
+    const dp = pc ? (d / pc) * 100 : 0
     return NextResponse.json({
-      c: 100 + Math.random() * 200,
-      h: 150 + Math.random() * 200,
-      l: 50 + Math.random() * 200,
-      o: 100 + Math.random() * 200,
-      pc: 100 + Math.random() * 200,
+      c,
+      h: Math.max(c, pc) + Math.random() * 5,
+      l: Math.min(c, pc) - Math.random() * 5,
+      o: pc + (Math.random() - 0.5) * 2,
+      pc,
+      d,
+      dp,
+      mock: true,
     })
   }
 
@@ -36,20 +58,33 @@ export async function GET(request: Request) {
     )
 
     if (!response.ok) {
-      throw new Error(`Finnhub API error: ${response.statusText}`)
+      throw new Error(`Finnhub API error: ${response.status} ${response.statusText}`)
     }
 
     const data: QuoteResponse = await response.json()
-    return NextResponse.json(data)
+    if (data && typeof data.c === 'number' && data.c > 0) {
+      return NextResponse.json(data)
+    }
+    // Finnhub can return zeros when unavailable. For indices or exchange-prefixed symbols,
+    // return a lightweight mock to avoid breaking UX (e.g., market widget).
+    if (symbol.startsWith('^') || symbol.includes(':')) {
+      const pc = 100 + Math.random() * 200
+      const c = pc + (Math.random() - 0.5) * 5
+      const d = c - pc
+      const dp = pc ? (d / pc) * 100 : 0
+      return NextResponse.json({ c, h: Math.max(c, pc) + Math.random() * 5, l: Math.min(c, pc) - Math.random() * 5, o: pc, pc, d, dp, mock: true })
+    }
+    return NextResponse.json({ error: 'Data unavailable' }, { status: 503 })
   } catch (error) {
     console.error('Error fetching quote:', error)
-    // Fallback to mock data
-    return NextResponse.json({
-      c: 100 + Math.random() * 200,
-      h: 150 + Math.random() * 200,
-      l: 50 + Math.random() * 200,
-      o: 100 + Math.random() * 200,
-      pc: 100 + Math.random() * 200,
-    })
+    // For indices or exchange-prefixed symbols, provide mock data on failure
+    if (rawSymbol && (rawSymbol.startsWith('^') || rawSymbol.includes(':') || /\.(NS|BO)$/i.test(rawSymbol))) {
+      const pc = 100 + Math.random() * 200
+      const c = pc + (Math.random() - 0.5) * 5
+      const d = c - pc
+      const dp = pc ? (d / pc) * 100 : 0
+      return NextResponse.json({ c, h: Math.max(c, pc) + Math.random() * 5, l: Math.min(c, pc) - Math.random() * 5, o: pc, pc, d, dp, mock: true })
+    }
+    return NextResponse.json({ error: 'Data unavailable' }, { status: 503 })
   }
 }

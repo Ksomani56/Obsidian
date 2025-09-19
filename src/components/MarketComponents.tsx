@@ -21,16 +21,24 @@ export function MarketRow({ name, price, change, changePercent, isPositive }: Ma
       <div>
         <div className="text-primary text-sm font-medium">{name}</div>
         <div className="text-secondary text-xs">
-          {formatCurrency(price, currency, fxRate)}
+          {price === null || price === undefined || isNaN(Number(price)) || Number(price) <= 0
+            ? 'Data unavailable'
+            : formatCurrency(Number(price), currency, fxRate)}
         </div>
       </div>
       <div className="text-right">
-        <div className={`text-sm font-medium ${isPositive ? 'metric-positive' : 'metric-negative'}`}>
-          {formatCurrency(change, currency, fxRate)}
-        </div>
-        <div className={`text-xs ${isPositive ? 'metric-positive' : 'metric-negative'}`}>
-          {typeof changePercent === 'number' ? `${changePercent.toFixed(2)}%` : '0.00%'}
-        </div>
+        {change === null || change === undefined ? (
+          <div className="text-xs text-secondary">—</div>
+        ) : (
+          <>
+            <div className={`text-sm font-medium ${isPositive ? 'metric-positive' : 'metric-negative'}`}>
+              {formatCurrency(change, currency, fxRate)}
+            </div>
+            <div className={`text-xs ${isPositive ? 'metric-positive' : 'metric-negative'}`}>
+              {typeof changePercent === 'number' ? `${changePercent.toFixed(2)}%` : '—'}
+            </div>
+          </>
+        )}
       </div>
     </div>
   );

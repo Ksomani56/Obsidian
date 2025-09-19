@@ -39,10 +39,6 @@ Create a `.env.local` at the project root (not committed). Example:
 FINNHUB_API_KEY=your_finnhub_api_key
 ```
 
-Notes:
-- Do not prefix secrets with `NEXT_PUBLIC_` (that would expose them to the browser).
-- Keep secrets on the server only (API routes, server actions). The app proxies requests to Finnhub via API routes.
-
 3. Run the dev server
 
 ```bash
@@ -264,10 +260,3 @@ This project is licensed under the MIT License.
 3. Make your changes
 4. Submit a pull request
 
-## 📞 Support
-
-For support or questions, please open an issue in the repository.
-
----
-
-Built with ❤️ using Next.js 14, TypeScript, and Tailwind CSS

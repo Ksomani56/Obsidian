@@ -5,7 +5,7 @@ import dynamic from 'next/dynamic'
 
 // Dynamically import Plotly to avoid SSR issues
 const Plot = dynamic(() => import('react-plotly.js'), { ssr: false })
-import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts'
+import { LineChart, Line, AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts'
 import { Target, BarChart3, Upload } from 'lucide-react'
 import Widget from '@/components/Widget'
 
@@ -70,6 +70,25 @@ const TICKER_SECTOR: Record<string, string> = {
   NESTLEIND: 'Consumer'
 }
 
+// Heuristic sector inference from name/ticker when explicit sector is missing
+function inferSectorFromName(nameOrTicker: string): string {
+  const s = (nameOrTicker || '').toUpperCase()
+  const has = (k: string) => s.includes(k)
+  if (has('BANK') || has('FINANCE') || has('NBFC') || has('INSURANCE') || has('FINANCIAL')) return 'Financials'
+  if (has('OIL') || has('GAS') || has('POWER') || has('ENERGY') || has('COAL')) return 'Energy'
+  if (has('PHARMA') || has('HEALTH') || has('HOSPITAL') || has('LIFE SCIENCE')) return 'Healthcare'
+  if (has('TECH') || has('SOFTWARE') || has('IT') || has('INFOSYS') || has('TCS')) return 'IT'
+  if (has('TELECOM') || has('COMMUNICATION') || has('AIRTEL') || has('VODAFONE')) return 'Telecom'
+  if (has('AUTO') || has('MOTOR') || has('MARUTI') || has('TATA MOTORS') || has('ASHOK LEYLAND')) return 'Auto'
+  if (has('STEEL') || has('METAL') || has('ALUMIN') || has('COPPER') || has('ZINC')) return 'Materials'
+  if (has('CEMENT') || has('ENGINEER') || has('INFRA') || has('CONSTRUCT') || has('LARSEN') || has('LT')) return 'Industrials'
+  if (has('CHEM') || has('FERTILIZER') || has('AGRI') || has('AGRO')) return 'Materials'
+  if (has('FOOD') || has('BEVERAGE') || has('CONSUMER') || has('FMCG') || has('HINDUSTAN UNILEVER') || has('NESTLE')) return 'Consumer'
+  if (has('REALTY') || has('REAL ESTATE') || has('DLF') || has('LODHA')) return 'Real Estate'
+  if (has('PAINT') || has('ASIAN PAINTS')) return 'Materials'
+  return 'Other'
+}
+
 export default function RiskPage() {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [uploadedHoldings, setUploadedHoldings] = useState<Holding[]>([])
@@ -91,7 +110,7 @@ export default function RiskPage() {
     }
   }, [uploadedHoldings])
   const [analysis, setAnalysis] = useState<PortfolioAnalysis | null>(null)
-  const [chartType, setChartType] = useState<'line' | 'bar' | 'candlestick' | 'ohlc'>('line')
+  const [chartType, setChartType] = useState<'line' | 'area' | 'bar' | 'candlestick' | 'ohlc' | 'pie'>('line')
   // Modal/manual transaction state removed per spec
 
   // CSV parsing to holdings (columns: ticker,name,quantity,avgPrice,instrument,sector)
@@ -122,6 +141,74 @@ export default function RiskPage() {
       }
     }
     return out
+  }
+
+  // Detect and parse broker statement (Excel converted to 2D array) like the provided screenshot
+  // We build holdings from the "Unrealised trades" section using Quantity and Buy value/price
+  function parseBrokerStatementRows(rows: any[][]): Holding[] {
+    const toLower = (v: any) => String(v ?? '').trim().toLowerCase()
+    const toUpper = (v: any) => String(v ?? '').trim().toUpperCase()
+
+    // Find all section starts labeled "Unrealised trades"
+    const holdings: Holding[] = []
+    for (let r = 0; r < rows.length; r++) {
+      const line = rows[r].map(toLower)
+      if (!line.length) continue
+      const isUnrealised = line.some(c => c === 'unrealised trades' || c === 'unrealized trades')
+      if (!isUnrealised) continue
+
+      // Next non-empty row should be headers for the section
+      let headerIdx = -1
+      for (let k = r + 1; k < Math.min(rows.length, r + 10); k++) {
+        const hdr = rows[k].map(toLower)
+        if (hdr.some(c => c)) { headerIdx = k; break }
+      }
+      if (headerIdx === -1) continue
+
+      const header = rows[headerIdx].map((c: any) => String(c))
+      const lowerHeader = header.map(h => h.trim().toLowerCase())
+      const findIndex = (cands: string[]) => {
+        for (const c of cands) {
+          const idx = lowerHeader.indexOf(c)
+          if (idx !== -1) return idx
+        }
+        for (let i = 0; i < lowerHeader.length; i++) if (cands.some(c => lowerHeader[i].includes(c))) return i
+        return -1
+      }
+
+      const iName = findIndex(['stock name','name','symbol','scrip'])
+      const iQty = findIndex(['quantity','qty'])
+      const iBuyVal = findIndex(['buy value','purchase value'])
+      const iBuyPrice = findIndex(['buy price','avg price','average price'])
+      const iClosingPrice = findIndex(['closing price','ltp','last price'])
+
+      // Data starts after header until blank row or next section title
+      for (let i = headerIdx + 1; i < rows.length; i++) {
+        const row = rows[i]
+        const cellsLower = row.map(toLower)
+        const isBlank = row.every(c => String(c).trim() === '')
+        const isNextSection = cellsLower.some(c => c === 'realised trades' || c === 'realized trades' || c === 'disclaimer' || c === 'summary')
+        if (isBlank || isNextSection) break
+
+        const nameRaw = row[iName]
+        const qtyRaw = row[iQty]
+        if (nameRaw == null || nameRaw === '') continue
+        const quantity = Number(String(qtyRaw ?? '').replace(/[,\s]/g, '')) || 0
+        if (!(quantity > 0)) continue
+        const buyValue = iBuyVal !== -1 ? Number(String(row[iBuyVal] ?? '').replace(/[,\s]/g, '')) : NaN
+        const buyPrice = iBuyPrice !== -1 ? Number(String(row[iBuyPrice] ?? '').replace(/[,\s]/g, '')) : NaN
+        const avgPrice = Number.isFinite(buyValue) && buyValue > 0 ? (buyValue / quantity) : (Number.isFinite(buyPrice) ? buyPrice : 0)
+        const ticker = toUpper(nameRaw)
+        const name = toUpper(nameRaw)
+        if (avgPrice > 0) {
+          const investedAmount = quantity * avgPrice
+          const sector = TICKER_SECTOR[ticker] || inferSectorFromName(name)
+          holdings.push({ ticker, name, quantity, avgPrice, investedAmount, currentPrice: 0, currentValue: 0, totalPL: 0, totalPLPercent: 0, instrument: 'Equity', sector })
+        }
+      }
+    }
+
+    return holdings
   }
 
   const calculatePortfolioAnalysis = async (baseHoldings: Holding[]): Promise<PortfolioAnalysis> => {
@@ -320,7 +407,14 @@ export default function RiskPage() {
                             const sheet = wb.Sheets[wb.SheetNames[0]]
                             // Use 2D array to avoid CSV quoting issues
                             const rows: any[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' }) as any[][]
-                            // Find header row heuristically
+                            // First, try to parse as the broker statement format (with Unrealised trades section)
+                            const brokerHoldings = parseBrokerStatementRows(rows)
+                            if (brokerHoldings.length > 0) {
+                              setUploadedHoldings(brokerHoldings)
+                              return
+                            }
+
+                            // Otherwise, fall back to generic holdings header detection
                             let headerIdx = -1
                             for (let i = 0; i < rows.length; i++) {
                               const cols = rows[i].map((c: any) => String(c).trim().toLowerCase())
@@ -470,6 +564,30 @@ export default function RiskPage() {
                             dot={false}
                           />
                         </LineChart>
+                      ) : chartType === 'area' ? (
+                        <AreaChart data={filteredHistory}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#374151" opacity={0.3} />
+                          <XAxis 
+                            dataKey="date" 
+                            tick={{ fontSize: 12, fill: '#9CA3AF' }}
+                            tickFormatter={(value) => new Date(value).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                          />
+                          <YAxis 
+                            tick={{ fontSize: 12, fill: '#9CA3AF' }}
+                            tickFormatter={(value) => `₹${(value / 1000).toFixed(0)}K`}
+                          />
+                          <Tooltip 
+                            contentStyle={{
+                              backgroundColor: '#1F2937',
+                              border: '1px solid #374151',
+                              borderRadius: '8px',
+                              color: '#F9FAFB'
+                            }}
+                            formatter={(value: number) => [`₹${value.toLocaleString()}`, 'Value']}
+                            labelFormatter={(label) => new Date(label).toLocaleDateString()}
+                          />
+                          <Area type="monotone" dataKey="value" stroke="#8B5CF6" fill="#8B5CF6" fillOpacity={0.2} />
+                        </AreaChart>
                       ) : chartType === 'bar' ? (
                         <BarChart data={filteredHistory}>
                           <CartesianGrid strokeDasharray="3 3" stroke="#374151" opacity={0.3} />
@@ -494,6 +612,38 @@ export default function RiskPage() {
                           />
                           <Bar dataKey="value" fill="#8B5CF6" />
                         </BarChart>
+                      ) : chartType === 'pie' ? (
+                        <PieChart>
+                          <Pie
+                            data={(() => {
+                              if (!analysis) return []
+                              const total = analysis.holdings.reduce((s, h) => s + h.currentValue, 0) || 1
+                              return analysis.holdings
+                                .map(h => ({ name: h.ticker, value: h.currentValue, pct: (h.currentValue / total) * 100 }))
+                                .sort((a, b) => b.value - a.value)
+                                .slice(0, 12)
+                            })()}
+                            cx="50%"
+                            cy="50%"
+                            labelLine={false}
+                            label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                            outerRadius={80}
+                            fill="#8884d8"
+                            dataKey="value"
+                          >
+                            {(() => {
+                              const n = Math.min(12, analysis?.holdings.length || 0)
+                              return new Array(n).fill(0).map((_, i) => (
+                                <Cell key={`alloc-${i}`} fill={COLORS[i % COLORS.length]} />
+                              ))
+                            })()}
+                          </Pie>
+                          <Tooltip 
+                            formatter={(value: number) => [`₹${value.toLocaleString()}`, 'Value']}
+                            contentStyle={{ backgroundColor: '#1F2937', border: '1px solid #374151', borderRadius: '8px', color: '#F9FAFB' }}
+                          />
+                          <Legend />
+                        </PieChart>
                       ) : ( // candlestick / ohlc handled with Plotly using synthetic OHLC from portfolio values
                         <div className="w-full">
                           <Plot
@@ -522,7 +672,9 @@ export default function RiskPage() {
                   <div className="flex justify-center space-x-2 mt-4">
                     {[
                       { type: 'line', icon: BarChart3, label: 'Line' },
+                      { type: 'area', icon: BarChart3, label: 'Area' },
                       { type: 'bar', icon: BarChart3, label: 'Bar' },
+                      { type: 'pie', icon: BarChart3, label: 'Pie' },
                       { type: 'candlestick', icon: BarChart3, label: 'Candlestick' },
                       { type: 'ohlc', icon: BarChart3, label: 'OHLC' }
                     ].map(({ type, icon: Icon, label }) => (
@@ -633,7 +785,7 @@ export default function RiskPage() {
           <div className="space-y-6">
             {/* Performance Comparison removed per new spec */}
 
-            {/* Exposure Breakdown (by Sector) */}
+            {/* Exposure Breakdown (by Sector Value) */}
             {analysis && analysis.holdings.length > 0 && (
               <>
                 <Widget title="Exposure Breakdown">
@@ -645,7 +797,7 @@ export default function RiskPage() {
                             const bySector: Record<string, number> = {}
                             const total = analysis.holdings.reduce((s, h) => s + h.currentValue, 0) || 1
                             analysis.holdings.forEach((h) => {
-                              const sector = TICKER_SECTOR[h.ticker] || 'Other'
+                              const sector = (h.sector && h.sector.trim()) || TICKER_SECTOR[h.ticker] || inferSectorFromName(h.name || h.ticker)
                               bySector[sector] = (bySector[sector] || 0) + h.currentValue
                             })
                             return Object.entries(bySector).map(([name, value], i) => ({ name, value, color: COLORS[i % COLORS.length], pct: (value / total) * 100 }))
@@ -662,7 +814,7 @@ export default function RiskPage() {
                             const sectors = (() => {
                               const bySector: Record<string, number> = {}
                               analysis.holdings.forEach(h => {
-                                const sector = TICKER_SECTOR[h.ticker] || 'Other'
+                                const sector = (h.sector && h.sector.trim()) || TICKER_SECTOR[h.ticker] || inferSectorFromName(h.name || h.ticker)
                                 bySector[sector] = (bySector[sector] || 0) + h.currentValue
                               })
                               return Object.keys(bySector)
@@ -680,6 +832,52 @@ export default function RiskPage() {
                             borderRadius: '8px',
                             color: '#F9FAFB'
                           }}
+                        />
+                        <Legend />
+                      </PieChart>
+                    </ResponsiveContainer>
+                  </div>
+                </Widget>
+
+                {/* Sector Diversity (by count of holdings) */}
+                <Widget title="Sector Diversity">
+                  <div className="h-64">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <PieChart>
+                        <Pie
+                          data={(() => {
+                            const bySectorCount: Record<string, number> = {}
+                            analysis.holdings.forEach(h => {
+                              const sector = (h.sector && h.sector.trim()) || TICKER_SECTOR[h.ticker] || inferSectorFromName(h.name || h.ticker)
+                              bySectorCount[sector] = (bySectorCount[sector] || 0) + 1
+                            })
+                            return Object.entries(bySectorCount).map(([name, value], i) => ({ name, value, color: COLORS[i % COLORS.length] }))
+                          })()}
+                          cx="50%"
+                          cy="50%"
+                          labelLine={false}
+                          label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                          outerRadius={80}
+                          fill="#8884d8"
+                          dataKey="value"
+                        >
+                          {(() => {
+                            const sectors = (() => {
+                              const bySector: Record<string, number> = {}
+                              analysis.holdings.forEach(h => {
+                                const sector = (h.sector && h.sector.trim()) || TICKER_SECTOR[h.ticker] || inferSectorFromName(h.name || h.ticker)
+                                bySector[sector] = (bySector[sector] || 0) + 1
+                              })
+                              return Object.keys(bySector)
+                            })()
+                            return sectors.map((_, index) => (
+                              <Cell key={`diversity-${index}`} fill={COLORS[index % COLORS.length]} />
+                            ))
+                          })()}
+                        </Pie>
+                        <Tooltip 
+                          formatter={(value: number) => [String(value), 'Count']}
+                          contentStyle={{ backgroundColor: '#1F2937', border: '1px solid #374151', borderRadius: '8px', color: '#F9FAFB' }}
                         />
                         <Legend />
                       </PieChart>
