@@ -34,16 +34,26 @@ export async function GET(request: Request) {
   const apiKey = process.env.FINNHUB_API_KEY
   if (!apiKey) {
     console.warn('Finnhub API key not found, using mock data')
-    // Return mock data
-    const pc = 100 + Math.random() * 200
-    const c = pc + (Math.random() - 0.5) * 5
+    // Deterministic mock data based on symbol and date
+    const seedStr = `${symbol}-${new Date().toISOString().slice(0,10)}`
+    let seed = 0
+    for (let i = 0; i < seedStr.length; i++) seed = (seed * 31 + seedStr.charCodeAt(i)) >>> 0
+    const rnd = () => {
+      // xorshift32
+      seed ^= seed << 13
+      seed ^= seed >>> 17
+      seed ^= seed << 5
+      return ((seed >>> 0) % 10000) / 10000
+    }
+    const pc = 100 + rnd() * 200
+    const c = pc + (rnd() - 0.5) * 5
     const d = c - pc
     const dp = pc ? (d / pc) * 100 : 0
     return NextResponse.json({
       c,
-      h: Math.max(c, pc) + Math.random() * 5,
-      l: Math.min(c, pc) - Math.random() * 5,
-      o: pc + (Math.random() - 0.5) * 2,
+      h: Math.max(c, pc) + rnd() * 5,
+      l: Math.min(c, pc) - rnd() * 5,
+      o: pc + (rnd() - 0.5) * 2,
       pc,
       d,
       dp,
@@ -68,11 +78,15 @@ export async function GET(request: Request) {
     // Finnhub can return zeros when unavailable. For indices or exchange-prefixed symbols,
     // return a lightweight mock to avoid breaking UX (e.g., market widget).
     if (symbol.startsWith('^') || symbol.includes(':')) {
-      const pc = 100 + Math.random() * 200
-      const c = pc + (Math.random() - 0.5) * 5
+      const seedStr = `${symbol}-${new Date().toISOString().slice(0,10)}`
+      let seed = 0
+      for (let i = 0; i < seedStr.length; i++) seed = (seed * 31 + seedStr.charCodeAt(i)) >>> 0
+      const rnd = () => { seed ^= seed << 13; seed ^= seed >>> 17; seed ^= seed << 5; return ((seed >>> 0) % 10000) / 10000 }
+      const pc = 100 + rnd() * 200
+      const c = pc + (rnd() - 0.5) * 5
       const d = c - pc
       const dp = pc ? (d / pc) * 100 : 0
-      return NextResponse.json({ c, h: Math.max(c, pc) + Math.random() * 5, l: Math.min(c, pc) - Math.random() * 5, o: pc, pc, d, dp, mock: true })
+      return NextResponse.json({ c, h: Math.max(c, pc) + rnd() * 5, l: Math.min(c, pc) - rnd() * 5, o: pc, pc, d, dp, mock: true })
     }
     return NextResponse.json({ error: 'Data unavailable' }, { status: 503 })
   } catch (error) {

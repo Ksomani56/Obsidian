@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine } from 'recharts'
 import { TrendingUp, Calendar, BarChart3, Activity, Target, AlertTriangle } from 'lucide-react'
 import Widget from '@/components/Widget'
@@ -15,6 +15,232 @@ interface PredictionData {
   predictedPrice: number
   confidence: number
   trend: 'bullish' | 'bearish' | 'neutral'
+  technicalIndicators?: {
+    rsi: number
+    sma20: number
+    sma50: number
+    volatility: number
+    momentum: number
+  }
+  predictionMethod?: string
+}
+
+// Technical Analysis Functions
+function calculateSMA(prices: number[], period: number): number[] {
+  const sma: number[] = []
+  for (let i = period - 1; i < prices.length; i++) {
+    const sum = prices.slice(i - period + 1, i + 1).reduce((a, b) => a + b, 0)
+    sma.push(sum / period)
+  }
+  return sma
+}
+
+function calculateRSI(prices: number[], period: number = 14): number {
+  if (prices.length < period + 1) return 50
+  
+  const gains: number[] = []
+  const losses: number[] = []
+  
+  for (let i = 1; i < prices.length; i++) {
+    const change = prices[i] - prices[i - 1]
+    gains.push(change > 0 ? change : 0)
+    losses.push(change < 0 ? Math.abs(change) : 0)
+  }
+  
+  const avgGain = gains.slice(-period).reduce((a, b) => a + b, 0) / period
+  const avgLoss = losses.slice(-period).reduce((a, b) => a + b, 0) / period
+  
+  if (avgLoss === 0) return 100
+  const rs = avgGain / avgLoss
+  return 100 - (100 / (1 + rs))
+}
+
+function calculateVolatility(prices: number[], period: number = 20): number {
+  if (prices.length < period + 1) return 0
+  
+  const returns: number[] = []
+  for (let i = 1; i < prices.length; i++) {
+    returns.push((prices[i] - prices[i - 1]) / prices[i - 1])
+  }
+  
+  const recentReturns = returns.slice(-period)
+  const mean = recentReturns.reduce((a, b) => a + b, 0) / recentReturns.length
+  const variance = recentReturns.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / recentReturns.length
+  
+  return Math.sqrt(variance * 252) // Annualized volatility
+}
+
+function calculateMomentum(prices: number[], period: number = 10): number {
+  if (prices.length < period + 1) return 0
+  return (prices[prices.length - 1] - prices[prices.length - 1 - period]) / prices[prices.length - 1 - period]
+}
+
+// ML Prediction Functions
+function predictWithLinearRegression(prices: number[], horizon: number): { predicted: number[], confidence: number } {
+  if (prices.length < 10) {
+    return { predicted: Array(horizon).fill(prices[prices.length - 1]), confidence: 0.3 }
+  }
+  
+  // Simple linear regression
+  const n = prices.length
+  const x = Array.from({ length: n }, (_, i) => i)
+  const y = prices
+  
+  const sumX = x.reduce((a, b) => a + b, 0)
+  const sumY = y.reduce((a, b) => a + b, 0)
+  const sumXY = x.reduce((sum, xi, i) => sum + xi * y[i], 0)
+  const sumXX = x.reduce((sum, xi) => sum + xi * xi, 0)
+  
+  const slope = (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX)
+  const intercept = (sumY - slope * sumX) / n
+  
+  // Calculate R-squared for confidence
+  const yMean = sumY / n
+  const ssRes = y.reduce((sum, yi, i) => sum + Math.pow(yi - (slope * x[i] + intercept), 2), 0)
+  const ssTot = y.reduce((sum, yi) => sum + Math.pow(yi - yMean, 2), 0)
+  const rSquared = 1 - (ssRes / ssTot)
+  
+  const predicted: number[] = []
+  for (let i = 1; i <= horizon; i++) {
+    predicted.push(Math.max(slope * (n + i - 1) + intercept, 0))
+  }
+  
+  return { predicted, confidence: Math.max(0.3, Math.min(0.9, rSquared)) }
+}
+
+function predictWithMovingAverage(prices: number[], horizon: number): { predicted: number[], confidence: number } {
+  if (prices.length < 20) {
+    return { predicted: Array(horizon).fill(prices[prices.length - 1]), confidence: 0.4 }
+  }
+  
+  const sma20 = calculateSMA(prices, 20)
+  const sma50 = calculateSMA(prices, Math.min(50, prices.length))
+  
+  const currentSMA20 = sma20[sma20.length - 1]
+  const currentSMA50 = sma50[sma50.length - 1]
+  const currentPrice = prices[prices.length - 1]
+  
+  // Trend analysis
+  const trend = currentSMA20 > currentSMA50 ? 1 : -1
+  const momentum = (currentPrice - currentSMA20) / currentSMA20
+  
+  const predicted: number[] = []
+  for (let i = 1; i <= horizon; i++) {
+    const trendFactor = trend * momentum * 0.1 // Conservative trend continuation
+    const predictedPrice = currentPrice * (1 + trendFactor * i)
+    predicted.push(Math.max(predictedPrice, 0))
+  }
+  
+  // Confidence based on trend consistency
+  const confidence = Math.max(0.4, Math.min(0.8, Math.abs(momentum) * 2 + 0.4))
+  
+  return { predicted, confidence }
+}
+
+function predictWithTechnicalAnalysis(prices: number[], horizon: number): { predicted: number[], confidence: number, indicators: any } {
+  const rsi = calculateRSI(prices)
+  const volatility = calculateVolatility(prices)
+  const momentum = calculateMomentum(prices)
+  const sma20 = calculateSMA(prices, 20)
+  const sma50 = calculateSMA(prices, Math.min(50, prices.length))
+  
+  const currentPrice = prices[prices.length - 1]
+  const currentSMA20 = sma20[sma20.length - 1]
+  const currentSMA50 = sma50[sma50.length - 1]
+  
+  // Technical signals
+  const isOversold = rsi < 30
+  const isOverbought = rsi > 70
+  const isBullishTrend = currentPrice > currentSMA20 && currentSMA20 > currentSMA50
+  const isBearishTrend = currentPrice < currentSMA20 && currentSMA20 < currentSMA50
+  
+  let trendSignal = 0
+  let confidence = 0.5
+  
+  // RSI signals
+  if (isOversold) {
+    trendSignal += 0.3
+    confidence += 0.1
+  } else if (isOverbought) {
+    trendSignal -= 0.3
+    confidence += 0.1
+  }
+  
+  // Moving average signals
+  if (isBullishTrend) {
+    trendSignal += 0.4
+    confidence += 0.15
+  } else if (isBearishTrend) {
+    trendSignal -= 0.4
+    confidence += 0.15
+  }
+  
+  // Momentum signals
+  if (momentum > 0.05) {
+    trendSignal += 0.2
+    confidence += 0.1
+  } else if (momentum < -0.05) {
+    trendSignal -= 0.2
+    confidence += 0.1
+  }
+  
+  // Volatility adjustment
+  const volatilityAdjustment = Math.min(volatility * 0.5, 0.3)
+  confidence = Math.max(0.3, Math.min(0.9, confidence - volatilityAdjustment))
+  
+  const predicted: number[] = []
+  const allowRandomness = typeof process !== 'undefined' && process.env.NEXT_PUBLIC_DEBUG === '1'
+  for (let i = 1; i <= horizon; i++) {
+    const trendFactor = trendSignal * (1 - i / horizon) // Diminishing trend over time
+    const volatilityFactor = allowRandomness ? (Math.random() - 0.5) * volatility * 0.1 : 0
+    const predictedPrice = currentPrice * (1 + trendFactor + volatilityFactor)
+    predicted.push(Math.max(predictedPrice, 0))
+  }
+  
+  return {
+    predicted,
+    confidence,
+    indicators: {
+      rsi,
+      sma20: currentSMA20,
+      sma50: currentSMA50,
+      volatility,
+      momentum
+    }
+  }
+}
+
+function ensemblePrediction(prices: number[], horizon: number): { predicted: number[], confidence: number, method: string, indicators: any } {
+  const lrResult = predictWithLinearRegression(prices, horizon)
+  const maResult = predictWithMovingAverage(prices, horizon)
+  const taResult = predictWithTechnicalAnalysis(prices, horizon)
+  
+  // Weighted ensemble (technical analysis gets higher weight)
+  const weights = { lr: 0.2, ma: 0.3, ta: 0.5 }
+  
+  const predicted: number[] = []
+  for (let i = 0; i < horizon; i++) {
+    const ensemblePrice = 
+      lrResult.predicted[i] * weights.lr +
+      maResult.predicted[i] * weights.ma +
+      taResult.predicted[i] * weights.ta
+    
+    predicted.push(ensemblePrice)
+  }
+  
+  const confidence = Math.max(
+    lrResult.confidence * weights.lr +
+    maResult.confidence * weights.ma +
+    taResult.confidence * weights.ta,
+    0.3
+  )
+  
+  return {
+    predicted,
+    confidence,
+    method: 'Ensemble (Linear Regression + Moving Average + Technical Analysis)',
+    indicators: taResult.indicators
+  }
 }
 
 export default function PredictPage() {
@@ -49,31 +275,48 @@ export default function PredictPage() {
         }))
 
         const currentPrice = quoteData.c
+        const prices = historical.map(h => h.price)
         
-        // For now, keep the prediction part mocked until ML integration
-        const predictedPrice = currentPrice * (0.95 + Math.random() * 0.1)
+        console.log(`Generating ML prediction for ${ticker} with ${prices.length} data points`)
+        
+        // Use ensemble ML prediction
+        const mlResult = ensemblePrediction(prices, horizon)
+        
         const predicted = []
-        
-        // Generate predicted data
         for (let i = 1; i <= horizon; i++) {
           const date = new Date(today)
           date.setDate(date.getDate() + i)
-          const trendFactor = (predictedPrice - currentPrice) / horizon
-          const predictedPriceValue = currentPrice + (trendFactor * i) + (Math.random() - 0.5) * 5
           predicted.push({
             date: date.toISOString().split('T')[0],
-            price: Math.max(predictedPriceValue, 0)
+            price: mlResult.predicted[i - 1]
           })
         }
+
+        const predictedPrice = mlResult.predicted[mlResult.predicted.length - 1]
+        const priceChange = predictedPrice - currentPrice
+        const trend: 'bullish' | 'bearish' | 'neutral' = 
+          priceChange > currentPrice * 0.02 ? 'bullish' : 
+          priceChange < -currentPrice * 0.02 ? 'bearish' : 'neutral'
 
         const predictionData: PredictionData = {
           historical,
           predicted,
           currentPrice,
           predictedPrice,
-          confidence: 0.75 + Math.random() * 0.2,
-          trend: predictedPrice > currentPrice ? 'bullish' : predictedPrice < currentPrice ? 'bearish' : 'neutral'
+          confidence: mlResult.confidence,
+          trend,
+          technicalIndicators: mlResult.indicators,
+          predictionMethod: mlResult.method
         }
+        
+        console.log(`ML Prediction completed:`, {
+          currentPrice: currentPrice.toFixed(2),
+          predictedPrice: predictedPrice.toFixed(2),
+          confidence: (mlResult.confidence * 100).toFixed(1) + '%',
+          trend,
+          rsi: mlResult.indicators.rsi.toFixed(1),
+          volatility: (mlResult.indicators.volatility * 100).toFixed(1) + '%'
+        })
 
         setPrediction(predictionData)
       } else {
@@ -81,42 +324,16 @@ export default function PredictPage() {
       }
     } catch (error) {
       console.error('Error generating prediction:', error)
-      // Fallback to mock data
-      const currentPrice = 150 + Math.random() * 50
-      const predictedPrice = currentPrice * (0.95 + Math.random() * 0.1)
       
-      const historical = []
-      const predicted = []
-      const today = new Date()
-      
-      for (let i = 89; i >= 0; i--) {
-        const date = new Date(today)
-        date.setDate(date.getDate() - i)
-        const basePrice = currentPrice * (0.8 + Math.random() * 0.4)
-        historical.push({
-          date: date.toISOString().split('T')[0],
-          price: basePrice
-        })
-      }
-      
-      for (let i = 1; i <= horizon; i++) {
-        const date = new Date(today)
-        date.setDate(date.getDate() + i)
-        const trendFactor = (predictedPrice - currentPrice) / horizon
-        const predictedPriceValue = currentPrice + (trendFactor * i) + (Math.random() - 0.5) * 5
-        predicted.push({
-          date: date.toISOString().split('T')[0],
-          price: Math.max(predictedPriceValue, 0)
-        })
-      }
-      
+      // Fallback: Show error message instead of fake data
       setPrediction({
-        historical,
-        predicted,
-        currentPrice,
-        predictedPrice,
-        confidence: 0.75 + Math.random() * 0.2,
-        trend: predictedPrice > currentPrice ? 'bullish' : predictedPrice < currentPrice ? 'bearish' : 'neutral'
+        historical: [],
+        predicted: [],
+        currentPrice: 0,
+        predictedPrice: 0,
+        confidence: 0,
+        trend: 'neutral',
+        predictionMethod: 'Error: Unable to fetch data'
       })
     } finally {
       setIsLoading(false)
@@ -210,7 +427,7 @@ export default function PredictPage() {
                         />
                         <YAxis
                           tick={{ fontSize: 12 }}
-                          tickFormatter={(value) => `$${(value as number).toFixed(0)}`}
+                          tickFormatter={(value) => formatCurrency(value as number, currency, fxRate)}
                         />
                         <Tooltip
                           contentStyle={{
@@ -219,7 +436,7 @@ export default function PredictPage() {
                             borderRadius: '6px',
                             color: 'var(--tw-text-light-primary)'
                           }}
-                          formatter={(value: number) => [`$${value.toFixed(2)}`, 'Price']}
+                          formatter={(value: number) => [formatCurrency(value, currency, fxRate), 'Price']}
                           labelFormatter={(label) => new Date(label).toLocaleDateString()}
                         />
                         <Legend />
@@ -322,7 +539,7 @@ export default function PredictPage() {
           </Widget>
 
           {/* Key Statistics Widget */}
-          {prediction && (
+          {prediction && prediction.currentPrice > 0 && (
             <Widget title="Key Statistics">
               <div className="space-y-3">
                 <div className="flex justify-between items-center">
@@ -354,6 +571,71 @@ export default function PredictPage() {
                   <span className={`font-semibold capitalize ${getTrendColor(prediction.trend)}`}>
                     {prediction.trend}
                   </span>
+                </div>
+                {prediction.predictionMethod && (
+                  <div className="pt-2 border-t border-tv-border">
+                    <div className="text-xs text-tv-secondary-text">
+                      <strong>Method:</strong> {prediction.predictionMethod}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </Widget>
+          )}
+
+          {/* Technical Indicators Widget */}
+          {prediction && prediction.technicalIndicators && (
+            <Widget title="Technical Analysis">
+              <div className="space-y-3">
+                <div className="flex justify-between items-center">
+                  <span className="text-tv-secondary-text text-sm">RSI (14)</span>
+                  <span className={`font-semibold ${
+                    prediction.technicalIndicators.rsi > 70 ? 'text-red-500' :
+                    prediction.technicalIndicators.rsi < 30 ? 'text-green-500' :
+                    'text-tv-primary-text'
+                  }`}>
+                    {prediction.technicalIndicators.rsi.toFixed(1)}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-tv-secondary-text text-sm">Volatility</span>
+                  <span className="text-tv-primary-text font-semibold">
+                    {(prediction.technicalIndicators.volatility * 100).toFixed(1)}%
+                  </span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-tv-secondary-text text-sm">Momentum (10d)</span>
+                  <span className={`font-semibold ${
+                    prediction.technicalIndicators.momentum > 0 ? 'text-green-500' : 'text-red-500'
+                  }`}>
+                    {(prediction.technicalIndicators.momentum * 100).toFixed(1)}%
+                  </span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-tv-secondary-text text-sm">SMA 20</span>
+                  <span className="text-tv-primary-text font-semibold">
+                    {formatCurrency(prediction.technicalIndicators.sma20, currency, fxRate)}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-tv-secondary-text text-sm">SMA 50</span>
+                  <span className="text-tv-primary-text font-semibold">
+                    {formatCurrency(prediction.technicalIndicators.sma50, currency, fxRate)}
+                  </span>
+                </div>
+              </div>
+            </Widget>
+          )}
+
+          {/* Error State */}
+          {prediction && prediction.predictionMethod?.includes('Error') && (
+            <Widget title="Prediction Error">
+              <div className="p-4 bg-red-100 dark:bg-red-900 border border-red-300 dark:border-red-700 rounded-md">
+                <div className="flex items-center">
+                  <div className="text-red-600 dark:text-red-400 mr-2">❌</div>
+                  <div className="text-sm text-red-800 dark:text-red-200">
+                    <strong>Unable to generate prediction:</strong> {prediction.predictionMethod}
+                  </div>
                 </div>
               </div>
             </Widget>

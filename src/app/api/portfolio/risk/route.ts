@@ -14,39 +14,22 @@ interface StockHistory {
 }
 
 async function fetchHistoricalData(symbol: string, from: number, to: number) {
-  try {
-    const response = await fetch(
-      `https://finnhub.io/api/v1/stock/candle?symbol=${symbol}&resolution=D&from=${from}&to=${to}&token=${process.env.FINNHUB_API_KEY}`
-    );
-    
-    if (!response.ok) {
-      throw new Error('Failed to fetch historical data');
-    }
-    
-    return await response.json();
-  } catch (error) {
-    console.error(`Error fetching historical data for ${symbol}:`, error);
-    return null;
+  // Free-tier mode: do not call upstream; return a minimal mock candle set
+  const days = Math.max(2, Math.floor((to - from) / (24 * 60 * 60)))
+  const t: number[] = []
+  const c: number[] = []
+  let price = 100
+  for (let i = 0; i < days; i++) {
+    t.push(from + i * 24 * 60 * 60)
+    price = price * (0.99 + 0.02 * (i % 10 === 0 ? 0.5 : 0.1))
+    c.push(price)
   }
+  return { s: 'ok', t, c }
 }
 
 async function fetchRiskFreeRate() {
-  try {
-    // Using FRED API for 10-year Treasury rate
-    const response = await fetch(
-      `https://api.stlouisfed.org/fred/series/observations/DGS10?api_key=${process.env.FRED_API_KEY}&file_type=json&limit=1`
-    );
-    
-    if (!response.ok) {
-      throw new Error('Failed to fetch risk-free rate');
-    }
-    
-    const data = await response.json();
-    return parseFloat(data.observations[0].value) / 100; // Convert percentage to decimal
-  } catch (error) {
-    console.error('Error fetching risk-free rate:', error);
-    return 0.035; // Default to 3.5% if API fails
-  }
+  // Free-tier mode: fixed default risk-free rate
+  return 0.035
 }
 
 export async function POST(request: Request) {

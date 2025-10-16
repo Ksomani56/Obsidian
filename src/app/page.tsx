@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo, useCallback } from 'react'
 import Link from 'next/link'
 import { TrendingUp, Shield, BarChart3, Activity, ArrowRight, Globe, DollarSign, Search } from 'lucide-react'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
@@ -31,8 +31,13 @@ export default function Home() {
   const [searchSubmitError, setSearchSubmitError] = useState<string | null>(null)
   const [selectedName, setSelectedName] = useState<string>('')
   const [selectedQuote, setSelectedQuote] = useState<{ c?: number; d?: number; dp?: number } | null>(null)
+  const [isValidatingSymbol, setIsValidatingSymbol] = useState(false)
+  const [searchRetryCount, setSearchRetryCount] = useState(0)
+  const [chartDataLimit, setChartDataLimit] = useState(30) // Limit chart data points for performance
 
-  const marketIndices = ['^GSPC', '^IXIC', '^DJI', '^NSEI', '^FTSE']
+  // Only use indices that reliably return on Finnhub free tier.
+  // Exclude markets that often return 0/no data (e.g., some non-US indices on free tier).
+  const marketIndices = ['^GSPC', '^IXIC', '^DJI']
 
   // Fetch stock symbols on mount
   useEffect(() => {
@@ -85,6 +90,7 @@ export default function Home() {
 
     if (q.length > 0) {
       const filtered = symbols
+        .filter(s => (s.exchange || '').toUpperCase() === 'US')
         .filter(s => {
           const matchesSymbol = s.symbol?.toLowerCase().includes(q);
           const matchesDisplay = s.displaySymbol?.toLowerCase().includes(q);
@@ -97,20 +103,13 @@ export default function Home() {
       setFilteredSymbols(filtered);
       // keep showSymbols controlled by focus/click
     } else {
-      // Default dropdown: non-US symbols sorted alphabetically by displaySymbol then symbol
+      // Default dropdown: US symbols only, sorted alphabetically
       const defaults = symbols
-        .filter(s => (s.exchange || '').toUpperCase() !== 'US')
-        .sort((a, b) => ((a.displaySymbol || a.symbol) .toLowerCase()).localeCompare(((b.displaySymbol || b.symbol).toLowerCase())))
+        .filter(s => (s.exchange || '').toUpperCase() === 'US')
+        .sort((a, b) => ((a.displaySymbol || a.symbol).toLowerCase()).localeCompare(((b.displaySymbol || b.symbol).toLowerCase())))
         .slice(0, 200);
 
-      // If no non-US symbols, fall back to all symbols alphabetically
-      const finalDefaults = defaults.length > 0
-        ? defaults
-        : symbols
-            .sort((a, b) => ((a.displaySymbol || a.symbol).toLowerCase()).localeCompare(((b.displaySymbol || b.symbol).toLowerCase())))
-            .slice(0, 200);
-
-      setFilteredSymbols(finalDefaults);
+      setFilteredSymbols(defaults);
     }
   }, [searchQuery, symbols])
 
@@ -129,9 +128,15 @@ export default function Home() {
       e.preventDefault()
       const input = searchQuery.trim()
       if (!input) return
+      
+      // If there are filtered results, use the best match
+      if (filteredSymbols.length > 0) {
       const best = filteredSymbols[0]
-      const symbolToTry = best ? best.symbol : input.toUpperCase()
-      await validateAndSelectSymbol(symbolToTry)
+        await validateAndSelectSymbol(best.symbol)
+      } else {
+        // No filtered results, try the input as-is
+        await validateAndSelectSymbol(input.toUpperCase())
+      }
     }
   }
 
@@ -145,7 +150,7 @@ export default function Home() {
             const response = await fetch(`/api/quote?symbol=${encodeURIComponent(symbol)}`)
             if (!response.ok) throw new Error('Quote unavailable')
             const data = await response.json()
-            if (typeof data.c !== 'number' || data.c <= 0) throw new Error('No quote')
+            if (data.mock || typeof data.c !== 'number' || data.c <= 0) throw new Error('No quote')
             return {
               name: symbol.replace('^', ''),
               price: data.c,
@@ -177,12 +182,14 @@ export default function Home() {
     return () => clearInterval(interval)
   }, [])
 
-  const generateStockData = async (ticker: string) => {
+  const generateStockData = useCallback(async (ticker: string) => {
     setIsLoading(true)
     try {
       const today = new Date()
       const thirtyDaysAgo = new Date(today)
       thirtyDaysAgo.setDate(today.getDate() - 30)
+
+      console.log(`Fetching stock data for ${ticker}...`)
 
       const [candleRes, quoteRes] = await Promise.all([
         fetch(`/api/candle?symbol=${encodeURIComponent(ticker)}&from=${Math.floor(thirtyDaysAgo.getTime() / 1000)}&to=${Math.floor(today.getTime() / 1000)}`),
@@ -195,22 +202,24 @@ export default function Home() {
       ])
 
       if (candleData.s === 'ok' && candleData.t.length > 0) {
+        // Process data more efficiently
         const data = candleData.t.map((timestamp: number, index: number) => ({
           date: new Date(timestamp * 1000).toISOString().split('T')[0],
           price: candleData.c[index]
-        }))
+        })).filter((item: { date: string; price: number }) => item.price && item.price > 0) // Filter out invalid prices
 
         // Add current price from quote if it's newer
         const lastDate = new Date(candleData.t[candleData.t.length - 1] * 1000).toISOString().split('T')[0]
-        const today = new Date().toISOString().split('T')[0]
+        const todayStr = new Date().toISOString().split('T')[0]
         
-        if (lastDate !== today && quoteData && quoteData.c) {
+        if (lastDate !== todayStr && quoteData && quoteData.c && quoteData.c > 0) {
           data.push({
-            date: today,
+            date: todayStr,
             price: quoteData.c
           })
         }
 
+        console.log(`Loaded ${data.length} data points for ${ticker}`)
         setStockData(data)
         setSelectedQuote({ c: quoteData?.c, d: quoteData?.d, dp: quoteData?.dp })
       } else {
@@ -218,27 +227,34 @@ export default function Home() {
       }
     } catch (error) {
       console.error('Error fetching stock data:', error)
-      // Fallback to mock data
+      
+      // More realistic fallback data
       const data = []
-      const basePrice = 100 + Math.random() * 200
+      const basePrice = 150 + Math.random() * 100 // More realistic price range
       const today = new Date()
+      let currentPrice = basePrice
       
       for (let i = 29; i >= 0; i--) {
         const date = new Date(today)
         date.setDate(date.getDate() - i)
-        const price = basePrice * (0.8 + Math.random() * 0.4)
+        
+        // Create a more realistic price movement
+        const dailyChange = (Math.random() - 0.5) * 0.05 // ±2.5% daily change
+        currentPrice = currentPrice * (1 + dailyChange)
+        
         data.push({
           date: date.toISOString().split('T')[0],
-          price: Math.max(price, 1)
+          price: Math.max(currentPrice, 1)
         })
       }
       
+      console.log(`Using fallback data for ${ticker}`)
       setStockData(data)
       setSelectedQuote(null)
     } finally {
       setIsLoading(false)
     }
-  }
+  }, [])
 
   const handleStockChange = (ticker: string) => {
     setSelectedStock(ticker)
@@ -249,25 +265,96 @@ export default function Home() {
     await validateAndSelectSymbol(symbol)
   };
 
-  const validateAndSelectSymbol = async (symbol: string) => {
+  const validateAndSelectSymbol = async (symbol: string, retryCount = 0) => {
+    if (isValidatingSymbol) return; // Prevent multiple simultaneous validations
+    
+    setIsValidatingSymbol(true)
+    setSearchSubmitError(null)
+    
     try {
-      setSearchSubmitError(null)
+      console.log(`Validating symbol: ${symbol} (attempt ${retryCount + 1})`)
+      
       const res = await fetch(`/api/quote?symbol=${encodeURIComponent(symbol)}`)
-      if (!res.ok) throw new Error('Stock not found')
+      
+      if (!res.ok) {
+        if (res.status === 429 && retryCount < 2) {
+          // Rate limited - retry after delay
+          console.log('Rate limited, retrying...')
+          await new Promise(resolve => setTimeout(resolve, 1000 * (retryCount + 1)))
+          return validateAndSelectSymbol(symbol, retryCount + 1)
+        }
+        throw new Error(`API error: ${res.status} ${res.statusText}`)
+      }
+      
       const quote = await res.json()
-      if (!quote || typeof quote.c !== 'number' || quote.c <= 0) throw new Error('Stock not found')
+      
+      if (!quote || typeof quote.c !== 'number' || quote.c <= 0) {
+        throw new Error('Invalid quote data received')
+      }
 
+      // Success - update state
       setSelectedStock(symbol)
       setSelectedQuote({ c: quote.c, d: quote.d, dp: quote.dp })
       const match = symbols.find(s => s.symbol === symbol || s.displaySymbol === symbol)
       setSelectedName(match ? (match.description || symbol) : symbol)
       setSearchQuery('')
       setShowSymbols(false)
+      setSearchRetryCount(0)
+      
+      console.log(`Successfully validated symbol: ${symbol}`)
       await generateStockData(symbol)
+      
     } catch (err) {
-      setSearchSubmitError('Stock not found')
+      console.error(`Symbol validation failed for ${symbol}:`, err)
+      
+      let errorMessage = 'Stock not found'
+      
+      if (err instanceof Error) {
+        if (err.message.includes('API error')) {
+          errorMessage = 'Service temporarily unavailable. Please try again.'
+        } else if (err.message.includes('Invalid quote')) {
+          errorMessage = 'Invalid stock symbol or data unavailable'
+        } else if (err.message.includes('Rate limited')) {
+          errorMessage = 'Too many requests. Please wait a moment.'
+        } else {
+          errorMessage = `Error: ${err.message}`
+        }
+      }
+      
+      setSearchSubmitError(errorMessage)
+      setSearchRetryCount(retryCount + 1)
+      
+      // Auto-retry for network errors (up to 2 retries)
+      if (retryCount < 2 && (err instanceof Error && err.message.includes('fetch'))) {
+        console.log(`Retrying symbol validation for ${symbol}...`)
+        setTimeout(() => {
+          validateAndSelectSymbol(symbol, retryCount + 1)
+        }, 2000 * (retryCount + 1))
+      }
+    } finally {
+      setIsValidatingSymbol(false)
     }
   }
+
+  // Memoized chart data for performance
+  const optimizedStockData = useMemo(() => {
+    if (!stockData || stockData.length === 0) return []
+    
+    // Limit data points for better performance
+    if (stockData.length <= chartDataLimit) return stockData
+    
+    // Sample data points evenly across the dataset
+    const step = Math.floor(stockData.length / chartDataLimit)
+    return stockData.filter((_, index) => index % step === 0 || index === stockData.length - 1)
+  }, [stockData, chartDataLimit])
+
+  // Memoized chart configuration
+  const chartConfig = useMemo(() => ({
+    margin: { top: 5, right: 30, left: 20, bottom: 5 },
+    strokeWidth: 2,
+    dot: false,
+    activeDot: { r: 4, fill: '#2962FF' }
+  }), [])
 
   // Generate initial data on component mount
   useEffect(() => {
@@ -327,10 +414,27 @@ export default function Home() {
                   <div className="mb-2 text-xs text-yellow-400">Using mock symbol list (FINNHUB_API_KEY missing or API unavailable)</div>
                 )}
                 {searchSubmitError && (
-                  <div className="mb-2 text-xs text-red-500">{searchSubmitError}</div>
+                  <div className="mb-2 flex items-center justify-between">
+                    <div className="text-xs text-red-500">{searchSubmitError}</div>
+                    {searchRetryCount > 0 && (
+                      <button
+                        onClick={() => {
+                          const input = searchQuery.trim()
+                          if (input) {
+                            validateAndSelectSymbol(input.toUpperCase())
+                          }
+                        }}
+                        className="text-xs text-blue-500 hover:text-blue-700 underline"
+                        disabled={isValidatingSymbol}
+                      >
+                        Retry
+                      </button>
+                    )}
+                  </div>
                 )}
                 <div className="flex items-center space-x-2">
                   <Search className="h-4 w-4 text-secondary" />
+                  <div className="flex-1 relative">
                   <input
                     type="text"
                     value={searchQuery}
@@ -339,9 +443,21 @@ export default function Home() {
                     onBlur={handleSearchBlur}
                     onKeyDown={handleSearchKeyDown}
                     placeholder={isLoadingSymbols ? "Loading symbols..." : "Search stocks..."}
-                    className="flex-1 px-3 py-2 border border-primary rounded-md bg-secondary text-primary focus:outline-none focus:border-light-accent dark:focus:border-dark-accent"
-                    disabled={isLoadingSymbols}
-                  />
+                      className={`w-full px-3 py-2 border rounded-md bg-secondary text-primary focus:outline-none transition-colors ${
+                        searchSubmitError 
+                          ? 'border-red-500 focus:border-red-500' 
+                          : isValidatingSymbol
+                          ? 'border-yellow-500 focus:border-yellow-500'
+                          : 'border-primary focus:border-light-accent dark:focus:border-dark-accent'
+                      }`}
+                      disabled={isLoadingSymbols || isValidatingSymbol}
+                    />
+                    {isValidatingSymbol && (
+                      <div className="absolute right-3 top-1/2 transform -translate-y-1/2">
+                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-500"></div>
+                      </div>
+                    )}
+                  </div>
                 </div>
                 
                 {/* Symbol Suggestions */}
@@ -403,20 +519,22 @@ export default function Home() {
                       <p className="text-secondary">Loading chart...</p>
                     </div>
                   </div>
-                ) : stockData.length > 0 ? (
+                ) : optimizedStockData.length > 0 ? (
                   <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={stockData}>
+                    <LineChart data={optimizedStockData} margin={chartConfig.margin}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#666666" opacity={0.3} />
                       <XAxis 
                         dataKey="date" 
                         tick={{ fontSize: 10, fill: '#666666' }}
-                        tickFormatter={(value) => new Date(value).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                        tickFormatter={(value) => new Date(`${value}T00:00:00Z`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
                         stroke="#666666"
+                        interval="preserveStartEnd"
                       />
                       <YAxis 
                         tick={{ fontSize: 10, fill: '#666666' }}
                         tickFormatter={(value) => formatCurrency(value, currency, fxRate)}
                         stroke="#666666"
+                        domain={['dataMin - 5', 'dataMax + 5']}
                       />
                       <Tooltip 
                         contentStyle={{
@@ -426,15 +544,16 @@ export default function Home() {
                           color: '#D1D4DC'
                         }}
                         formatter={(value: number) => [formatCurrency(value, currency, fxRate), 'Price']}
-                        labelFormatter={(label) => new Date(label).toLocaleDateString()}
+                        labelFormatter={(label) => new Date(`${label}T00:00:00Z`).toLocaleDateString()}
                       />
                       <Line 
                         type="monotone" 
                         dataKey="price" 
                         stroke="#2962FF" 
-                        strokeWidth={2}
-                        dot={false}
-                        activeDot={{ r: 4, fill: '#2962FF' }}
+                        strokeWidth={chartConfig.strokeWidth}
+                        dot={chartConfig.dot}
+                        activeDot={chartConfig.activeDot}
+                        connectNulls={false}
                       />
                     </LineChart>
                   </ResponsiveContainer>
@@ -453,23 +572,30 @@ export default function Home() {
                 <div>
                   <span className="text-secondary">Current Price: </span>
                   <span className="text-primary font-semibold">
-                    {stockData.length > 0 ? formatCurrency(stockData[stockData.length - 1]?.price, currency, fxRate) : '--'}
+                    {optimizedStockData.length > 0 ? formatCurrency(optimizedStockData[optimizedStockData.length - 1]?.price, currency, fxRate) : '--'}
                   </span>
                 </div>
                 <div>
                   <span className="text-secondary">30-Day Change: </span>
                   <span className={`font-semibold ${
-                    stockData.length > 1 && stockData[stockData.length - 1]?.price > stockData[0]?.price 
+                    optimizedStockData.length > 1 && optimizedStockData[optimizedStockData.length - 1]?.price > optimizedStockData[0]?.price 
                       ? 'metric-positive' 
                       : 'metric-negative'
                   }`}>
-                    {stockData.length > 1 
-                      ? `${((stockData[stockData.length - 1]?.price - stockData[0]?.price) / stockData[0]?.price * 100).toFixed(1)}%`
+                    {optimizedStockData.length > 1 
+                      ? `${((optimizedStockData[optimizedStockData.length - 1]?.price - optimizedStockData[0]?.price) / optimizedStockData[0]?.price * 100).toFixed(1)}%`
                       : '--'
                     }
                   </span>
                 </div>
               </div>
+              
+              {/* Chart Performance Info */}
+              {stockData.length > chartDataLimit && (
+                <div className="mt-2 text-xs text-secondary">
+                  Showing {optimizedStockData.length} of {stockData.length} data points for optimal performance
+                </div>
+              )}
             </div>
           </Widget>
         </div>

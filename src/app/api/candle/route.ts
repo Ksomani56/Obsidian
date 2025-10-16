@@ -26,7 +26,7 @@ export async function GET(request: Request) {
   const apiKey = process.env.FINNHUB_API_KEY
   if (!apiKey) {
     console.warn('Finnhub API key not found, using mock data')
-    return NextResponse.json(generateMockCandles(Number(from), Number(to)))
+    return NextResponse.json({ ...generateMockCandles(Number(from), Number(to), symbol), mock: true })
   }
 
   try {
@@ -48,13 +48,18 @@ export async function GET(request: Request) {
   } catch (error) {
     console.error('Error fetching candles:', error)
     // Fallback to mock data
-    return NextResponse.json(generateMockCandles(Number(from), Number(to)))
+    return NextResponse.json({ ...generateMockCandles(Number(from), Number(to), symbol), mock: true })
   }
 }
 
-function generateMockCandles(from: number, to: number) {
+function generateMockCandles(from: number, to: number, symbol?: string | null) {
   const days = Math.floor((to - from) / (24 * 60 * 60))
-  const basePrice = 100 + Math.random() * 200
+  // Deterministic seed per symbol and day
+  const seedStr = `${symbol || 'MOCK'}-${new Date(from * 1000).toISOString().slice(0,10)}`
+  let seed = 0
+  for (let i = 0; i < seedStr.length; i++) seed = (seed * 31 + seedStr.charCodeAt(i)) >>> 0
+  const rnd = () => { seed ^= seed << 13; seed ^= seed >>> 17; seed ^= seed << 5; return ((seed >>> 0) % 10000) / 10000 }
+  const basePrice = 100 + rnd() * 200
   
   const t: number[] = []
   const c: number[] = []
@@ -65,11 +70,11 @@ function generateMockCandles(from: number, to: number) {
 
   for (let i = 0; i < days; i++) {
     const timestamp = from + i * 24 * 60 * 60
-    const openPrice = basePrice * (0.8 + Math.random() * 0.4)
-    const closePrice = openPrice * (0.9 + Math.random() * 0.2)
-    const highPrice = Math.max(openPrice, closePrice) * (1 + Math.random() * 0.1)
-    const lowPrice = Math.min(openPrice, closePrice) * (0.9 + Math.random() * 0.1)
-    const volume = Math.floor(100000 + Math.random() * 900000)
+    const openPrice = basePrice * (0.8 + rnd() * 0.4)
+    const closePrice = openPrice * (0.9 + rnd() * 0.2)
+    const highPrice = Math.max(openPrice, closePrice) * (1 + rnd() * 0.1)
+    const lowPrice = Math.min(openPrice, closePrice) * (0.9 + rnd() * 0.1)
+    const volume = Math.floor(100000 + rnd() * 900000)
 
     t.push(timestamp)
     o.push(openPrice)
