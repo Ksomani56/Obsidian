@@ -1614,7 +1614,7 @@ export default function RiskPage() {
                     <div className="flex items-center">
                       <div className="text-yellow-600 dark:text-yellow-400 mr-2">⚠️</div>
                       <div className="text-sm text-yellow-800 dark:text-yellow-200">
-                        <strong>Data Quality Notice:</strong> Some stocks couldn't be analyzed due to data unavailability. 
+                        <strong>Data Quality Notice:</strong> Some stocks could not be analyzed due to data unavailability. 
                         Risk calculations may be incomplete. Check the holdings table for details.
                       </div>
                     </div>

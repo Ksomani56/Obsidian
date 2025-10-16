@@ -275,7 +275,7 @@ export default function PredictPage() {
         }))
 
         const currentPrice = quoteData.c
-        const prices = historical.map(h => h.price)
+  const prices = historical.map((h: { date: string; price: number }) => h.price)
         
         console.log(`Generating ML prediction for ${ticker} with ${prices.length} data points`)
         

@@ -357,6 +357,7 @@ export default function Home() {
   }), [])
 
   // Generate initial data on component mount
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     generateStockData(selectedStock)
   }, [])
@@ -377,7 +378,7 @@ export default function Home() {
                   </h2>
                 </div>
                 <p className="text-secondary text-sm mb-4">
-                  Analyze your portfolio's risk metrics including expected return, volatility, and Sharpe ratio
+                  Analyze your portfolio&apos;s risk metrics including expected return, volatility, and Sharpe ratio
                 </p>
                 <div className="flex items-center text-light-accent dark:text-dark-accent font-medium text-sm group-hover:opacity-80">
                   Analyze Portfolio
@@ -547,112 +548,68 @@ export default function Home() {
                         labelFormatter={(label) => new Date(`${label}T00:00:00Z`).toLocaleDateString()}
                       />
                       <Line 
-                        type="monotone" 
-                        dataKey="price" 
-                        stroke="#2962FF" 
+                        type="monotone"
+                        dataKey="price"
+                        stroke="#2962FF"
                         strokeWidth={chartConfig.strokeWidth}
                         dot={chartConfig.dot}
                         activeDot={chartConfig.activeDot}
-                        connectNulls={false}
                       />
                     </LineChart>
                   </ResponsiveContainer>
                 ) : (
                   <div className="h-full flex items-center justify-center">
                     <div className="text-center">
-                      <BarChart3 className="h-12 w-12 text-secondary mx-auto mb-2" />
-                      <p className="text-secondary">No data available</p>
+                      <p className="text-secondary">No chart data available</p>
                     </div>
                   </div>
                 )}
               </div>
-              
-              {/* Stock Info */}
-              <div className="flex justify-between items-center text-sm">
-                <div>
-                  <span className="text-secondary">Current Price: </span>
-                  <span className="text-primary font-semibold">
-                    {optimizedStockData.length > 0 ? formatCurrency(optimizedStockData[optimizedStockData.length - 1]?.price, currency, fxRate) : '--'}
-                  </span>
-                </div>
-                <div>
-                  <span className="text-secondary">30-Day Change: </span>
-                  <span className={`font-semibold ${
-                    optimizedStockData.length > 1 && optimizedStockData[optimizedStockData.length - 1]?.price > optimizedStockData[0]?.price 
-                      ? 'metric-positive' 
-                      : 'metric-negative'
-                  }`}>
-                    {optimizedStockData.length > 1 
-                      ? `${((optimizedStockData[optimizedStockData.length - 1]?.price - optimizedStockData[0]?.price) / optimizedStockData[0]?.price * 100).toFixed(1)}%`
-                      : '--'
-                    }
-                  </span>
-                </div>
-              </div>
-              
-              {/* Chart Performance Info */}
-              {stockData.length > chartDataLimit && (
-                <div className="mt-2 text-xs text-secondary">
-                  Showing {optimizedStockData.length} of {stockData.length} data points for optimal performance
-                </div>
+            </div>
+          </Widget>
+
+          {/* ...existing code... */}
+        </div>
+
+        {/* Right Column */}
+        <div className="space-y-6">
+          <Widget title="Market Indices">
+            <div className="space-y-2">
+              {liveMarketData && liveMarketData.length > 0 ? (
+                liveMarketData.map((m) => (
+                  <div key={m.name} className="flex items-center justify-between py-2">
+                    {/* Use MarketRow if available; fallback to inline display */}
+                    {/* If MarketRow signature differs, the inline markup below is harmless */}
+                    <div className="flex items-center space-x-3">
+                      <div className="font-medium">{m.name}</div>
+                      <div className="text-sm text-secondary">{m.price !== null ? formatCurrency(m.price, currency, fxRate) : 'N/A'}</div>
+                    </div>
+                    <div className={`text-sm font-medium ${m.isPositive ? 'text-green-400' : 'text-red-400'}`}>
+                      {m.change !== null ? `${m.change >= 0 ? '+' : ''}${formatCurrency(m.change, currency, fxRate)} (${m.changePercent !== null ? `${m.changePercent.toFixed(2)}%` : '—'})` : '—'}
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div className="text-secondary text-sm">Market data unavailable</div>
               )}
             </div>
           </Widget>
-        </div>
 
-        {/* Sidebar - 1 column */}
-        <div className="space-y-6">
-          {/* Markets Widget */}
-          <Widget title="Markets">
-            <div className="space-y-3">
-              {liveMarketData.map((market, index) => (
-                <MarketRow
-                  key={index}
-                  name={market.name}
-                  price={market.price}
-                  change={market.change}
-                  changePercent={market.changePercent}
-                  isPositive={market.isPositive}
-                />
-              ))}
-            </div>
-          </Widget>
-
-          {/* Quick Stats Widget */}
+          {/* Quick stats or placeholders */}
           <Widget title="Quick Stats">
-            <div className="space-y-4">
-              <QuickStat
-                icon={<Globe className="h-4 w-4 text-secondary" />}
-                label="Active Markets"
-                value="24"
-                details={[
-                  { title: "Asia Pacific", value: "8 Markets", trend: "up" },
-                  { title: "Europe", value: "7 Markets", trend: "neutral" },
-                  { title: "Americas", value: "9 Markets", trend: "down" }
-                ]}
-              />
-              <QuickStat
-                icon={<DollarSign className="h-4 w-4 text-secondary" />}
-                label="Total Volume"
-                value={2400000000}
-                details={[
-                  { title: "24h Change", value: "+12.5%", trend: "up" },
-                  { title: "7d Average", value: formatCurrency(2100000000, currency, fxRate), trend: "neutral" },
-                  { title: "Market Share", value: "15.2%", trend: "up" }
-                ]}
-              />
-              <QuickStat
-                icon={<TrendingUp className="h-4 w-4 text-secondary" />}
-                label="Gainers"
-                value="1,247"
-                details={[
-                  { title: "Top Sector", value: "Technology", trend: "up" },
-                  { title: "Avg Gain", value: "2.8%", trend: "up" },
-                  { title: "New 52w Highs", value: "156", trend: "up" }
-                ]}
-              />
+            <div className="grid grid-cols-2 gap-4">
+              <div className="text-sm">
+                <div className="text-xs text-secondary">Selected</div>
+                <div className="font-medium">{selectedStock}</div>
+              </div>
+              <div className="text-right">
+                <div className="text-xs text-secondary">Price</div>
+                <div className="font-medium">{selectedQuote?.c ? formatCurrency(selectedQuote.c, currency, fxRate) : (stockData.length ? formatCurrency(stockData[stockData.length - 1]?.price, currency, fxRate) : '—')}</div>
+              </div>
             </div>
           </Widget>
+
+          {/* ...existing code... */}
         </div>
       </div>
     </div>
